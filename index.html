@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Échecs — barre d'évaluation</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="vendor/chessground/chessground.base.css">
+  <link rel="stylesheet" href="vendor/chessground/chessground.brown.css">
+  <link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>♞ Échecs <span>· barre d'évaluation</span></h1>
+  </header>
+
+  <!-- Accueil -->
+  <main id="lobby">
+    <p class="intro">
+      Joue une partie à deux et surveille la barre : si tu fais une erreur,
+      ton adversaire le voit tout de suite. Pas de meilleur coup, pas de chiffres, juste la barre.
+    </p>
+    <div class="card">
+      <button id="btn-create" class="primary">Créer une room</button>
+      <div class="or">ou</div>
+      <form id="join-form">
+        <input id="code-input" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button type="submit" id="btn-join">Rejoindre</button>
+      </form>
+      <p id="lobby-error" class="error" hidden></p>
+    </div>
+  </main>
+
+  <!-- Attente de l'adversaire -->
+  <main id="waiting" hidden>
+    <div class="card">
+      <p>Donne ce code à ton adversaire :</p>
+      <div id="room-code" class="code">-----</div>
+      <button id="btn-copy">Copier le lien d'invitation</button>
+      <p class="muted">En attente de l'adversaire…</p>
+      <button id="btn-cancel" class="ghost">Annuler</button>
+    </div>
+  </main>
+
+  <!-- Partie -->
+  <main id="game" hidden>
+    <div class="stage">
+      <div id="evalbar" aria-label="Barre d'évaluation"><div id="evalfill"></div></div>
+      <div class="board-holder">
+        <div id="board"></div>
+        <div id="promo" hidden></div>
+      </div>
+    </div>
+    <p id="status"></p>
+    <div class="actions">
+      <button id="btn-resign" class="ghost">Abandonner</button>
+      <button id="btn-rematch" class="primary" hidden>Revanche</button>
+      <button id="btn-leave" class="ghost">Quitter</button>
+    </div>
+    <p id="engine-note" class="muted small"></p>
+  </main>
+
+  <footer>
+    Moteur : <a href="https://github.com/nmrugg/stockfish.js">Stockfish.js</a> (GPLv3) ·
+    plateau : <a href="https://github.com/lichess-org/chessground">chessground</a> ·
+    règles : <a href="https://github.com/jhlywa/chess.js">chess.js</a> ·
+    réseau : <a href="https://peerjs.com">PeerJS</a>
+  </footer>
+
+  <script src="vendor/peerjs.min.js"></script>
+  <script>
+    // Les modules ES et le Worker Stockfish sont bloqués par le navigateur en file://
+    if (location.protocol === 'file:') {
+      const e = document.getElementById('lobby-error');
+      e.textContent = "Ce site ne marche pas en ouvrant index.html directement. Lance « python -m http.server » dans ce dossier puis va sur http://localhost:8000, ou utilise la version GitHub Pages.";
+      e.hidden = false;
+    }
+  </script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
