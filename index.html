@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Échecs — barre d'évaluation</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90' fill='%23d0a94f'>%E2%99%9E</text></svg>">
+  <meta name="theme-color" content="#12100d">
   <link rel="stylesheet" href="vendor/chessground/chessground.base.css">
   <link rel="stylesheet" href="vendor/chessground/chessground.brown.css">
   <link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css">
@@ -12,16 +13,40 @@
 </head>
 <body>
   <header>
-    <h1>♞ Échecs <span>· barre d'évaluation</span></h1>
+    <h1><span class="logo">♞</span> Échecs <span class="sub">· barre d'évaluation</span></h1>
   </header>
 
   <!-- Accueil -->
   <main id="lobby">
-    <p class="intro">
-      Joue une partie à deux et surveille la barre : si tu fais une erreur,
-      ton adversaire le voit tout de suite. Pas de meilleur coup, pas de chiffres, juste la barre.
-    </p>
+    <section class="hero">
+      <div class="hero-art" aria-hidden="true">
+        <div class="mini-bar"><i></i></div>
+        <div class="mini-board cg-wrap">
+          <piece class="knight white"></piece>
+          <piece class="king black"></piece>
+          <piece class="queen white"></piece>
+        </div>
+      </div>
+      <h2>Une erreur, et la barre te trahit.</h2>
+      <p class="intro">
+        Joue une partie à deux et surveille la barre : si tu fais une erreur,
+        ton adversaire le voit tout de suite. Pas de meilleur coup, pas de chiffres, juste la barre.
+      </p>
+    </section>
     <div class="card">
+      <div class="label">Cadence</div>
+      <div class="presets">
+        <button type="button" data-min="1" data-inc="0">1+0</button>
+        <button type="button" data-min="3" data-inc="2">3+2</button>
+        <button type="button" data-min="5" data-inc="3">5+3</button>
+        <button type="button" data-min="10" data-inc="0">10+0</button>
+        <button type="button" data-min="15" data-inc="10">15+10</button>
+        <button type="button" data-min="0" data-inc="0" aria-label="Sans limite de temps">∞</button>
+      </div>
+      <div class="tc">
+        <label>Temps (min) <input id="tc-min" type="number" min="0" max="180" step="0.5" value="10"></label>
+        <label>Ajout (s) <input id="tc-inc" type="number" min="0" max="60" value="0"></label>
+      </div>
       <button id="btn-create" class="primary">Créer une room</button>
       <div class="or">ou</div>
       <form id="join-form">
@@ -37,26 +62,45 @@
     <div class="card">
       <p>Donne ce code à ton adversaire :</p>
       <div id="room-code" class="code">-----</div>
+      <p id="tc-label" class="muted"></p>
       <button id="btn-copy">Copier le lien d'invitation</button>
-      <p class="muted">En attente de l'adversaire…</p>
+      <p class="muted pulse">En attente de l'adversaire…</p>
       <button id="btn-cancel" class="ghost">Annuler</button>
     </div>
   </main>
 
   <!-- Partie -->
   <main id="game" hidden>
+    <p id="status"></p>
     <div class="stage">
       <div id="evalbar" aria-label="Barre d'évaluation"><div id="evalfill"></div></div>
       <div class="board-holder">
         <div id="board"></div>
         <div id="promo" hidden></div>
       </div>
-    </div>
-    <p id="status"></p>
-    <div class="actions">
-      <button id="btn-resign" class="ghost">Abandonner</button>
-      <button id="btn-rematch" class="primary" hidden>Revanche</button>
-      <button id="btn-leave" class="ghost">Quitter</button>
+      <aside class="side">
+        <div id="clock-top" class="clock" data-label="Adversaire" hidden></div>
+        <div id="moves"></div>
+        <div class="nav">
+          <button id="nav-first" aria-label="Début de la partie">⏮</button>
+          <button id="nav-prev" aria-label="Coup précédent">◀</button>
+          <button id="nav-next" aria-label="Coup suivant">▶</button>
+          <button id="nav-last" aria-label="Position actuelle">⏭</button>
+        </div>
+        <div id="clock-bottom" class="clock" data-label="Toi" hidden></div>
+        <div id="chat">
+          <div id="chat-log" aria-live="polite"></div>
+          <form id="chat-form">
+            <input id="chat-input" maxlength="200" placeholder="Message…" autocomplete="off">
+            <button type="submit">Envoyer</button>
+          </form>
+        </div>
+        <div class="actions">
+          <button id="btn-resign" class="ghost">Abandonner</button>
+          <button id="btn-rematch" class="primary" hidden>Revanche</button>
+          <button id="btn-leave" class="ghost">Quitter</button>
+        </div>
+      </aside>
     </div>
     <p id="engine-note" class="muted small"></p>
   </main>

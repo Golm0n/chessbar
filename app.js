@@ -4,6 +4,7 @@ import { Chessground } from './vendor/chessground/chessground.min.js';
 /* ---------- Réglages ---------- */
 const MIN_DEPTH = 14;   // la barre ne bouge qu'à partir de cette profondeur
 const MAX_DEPTH = 17;   // profondeur maximale atteinte si on attend
+const FLAG_GRACE = 2000; // ms de marge avant de déclarer l'adversaire au temps (latence réseau)
 const ROOM_PREFIX = 'echecsbarre-';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -87,6 +88,12 @@ let isHost = false;
 let over = false;
 let iWantRematch = false;
 let theyWantRematch = false;
+let positions = [];      // { fen, last, san, check } par demi-coup, positions[0] = départ
+let view = 0;            // indice de la position affichée
+let evals = [];          // % Blancs connu par position (sert à la barre dans l'historique)
+let tc = null;           // cadence { ms, inc }, null = sans limite
+let clocks = { w: 0, b: 0 };
+let runStart = null;     // Date.now() du début du trait en cours, null = pendules à l'arrêt
 
 const colorName = (c) => (c === 'w' ? 'white' : 'black');
 
@@ -106,17 +113,26 @@ function randomCode() {
 /* ---------- Lobby : créer / rejoindre ---------- */
 function lobbyError(msg) { const e = $('lobby-error'); e.textContent = msg; e.hidden = !msg; }
 
+function readTc() {
+  const min = Math.min(180, Math.max(0, +$('tc-min').value || 0));
+  const inc = Math.min(60, Math.max(0, +$('tc-inc').value || 0));
+  return min > 0 ? { ms: min * 60000, inc: inc * 1000 } : null;
+}
+
 function createRoom() {
   lobbyError('');
   isHost = true;
+  tc = readTc();
   const code = randomCode();
   const p = makePeer(ROOM_PREFIX + code);
   peer = p;
   p.on('open', () => {
     $('room-code').textContent = code;
+    $('tc-label').textContent = tc ? `Cadence : ${tc.ms / 60000} min + ${tc.inc / 1000} s` : 'Sans limite de temps';
     show('waiting');
   });
   p.on('error', (err) => {
+    if (game) return; // perte du serveur de mise en relation : la partie continue en WebRTC
     if (err.type === 'unavailable-id') { p.destroy(); createRoom(); return; }
     p.destroy(); peer = null;
     show('lobby');
@@ -128,7 +144,7 @@ function createRoom() {
     bindConn(c);
     c.on('open', () => {
       myColor = Math.random() < 0.5 ? 'w' : 'b';
-      c.send({ t: 'start', color: myColor === 'w' ? 'b' : 'w' });
+      c.send({ t: 'start', color: myColor === 'w' ? 'b' : 'w', tc });
       startGame();
     });
   });
@@ -163,6 +179,7 @@ function joinRoom(rawCode) {
 function bindConn(c) {
   c.on('data', onMessage);
   c.on('close', () => {
+    $('chat-input').disabled = true;
     if (!over && game) { over = true; setStatus("L'adversaire s'est déconnecté."); refreshBoard(); updateButtons(); }
   });
   c.on('error', () => {});
@@ -175,11 +192,18 @@ function onMessage(msg) {
   switch (msg.t) {
     case 'start':
       myColor = msg.color === 'b' ? 'b' : 'w';
+      tc = msg.tc && msg.tc.ms > 0 && msg.tc.inc >= 0 ? { ms: +msg.tc.ms, inc: +msg.tc.inc } : null;
       startGame();
       break;
     case 'move':
       if (!game || over || game.turn() === myColor) return;
-      applyMove({ from: msg.from, to: msg.to, promotion: msg.promotion }, false);
+      applyMove({ from: msg.from, to: msg.to, promotion: msg.promotion }, false, msg.left);
+      break;
+    case 'chat':
+      addChat('Adversaire', String(msg.text).slice(0, 200));
+      break;
+    case 'flag':
+      if (game && !over && (msg.c === 'w' || msg.c === 'b')) endOnTime(msg.c);
       break;
     case 'resign':
       if (!over) { over = true; setStatus("L'adversaire abandonne. Tu gagnes !"); finishUI(); }
@@ -198,8 +222,13 @@ function startGame() {
   over = false;
   iWantRematch = false;
   theyWantRematch = false;
+  positions = [{ fen: game.fen() }];
+  view = 0;
+  evals = [50];
+  runStart = null;
+  if (tc) clocks = { w: tc.ms, b: tc.ms };
+  $('clock-top').hidden = $('clock-bottom').hidden = !tc;
   $('evalbar').classList.toggle('flipped', myColor === 'b');
-  setBar(50);
 
   if (!cg) {
     cg = Chessground($('board'), {
@@ -214,11 +243,15 @@ function startGame() {
         events: { after: (from, to) => onUserMove(from, to) } },
     });
   } else {
-    cg.set({ orientation: colorName(myColor), lastMove: undefined });
+    cg.set({ orientation: colorName(myColor) });
   }
   if (!evaluator) {
     evaluator = new Evaluator(
-      (cp) => { if (!over) setBar(whitePct(cp)); },
+      (cp) => {
+        if (over) return;
+        evals[positions.length - 1] = whitePct(cp);
+        if (view === positions.length - 1) setBar(whitePct(cp));
+      },
       (txt) => { $('engine-note').textContent = txt; });
     $('engine-note').textContent = 'Chargement du moteur…';
   } else {
@@ -238,23 +271,107 @@ function legalDests() {
   return dests;
 }
 
-function refreshBoard(lastMove) {
+// Affiche positions[view] ; on ne peut jouer que sur la position actuelle
+function refreshBoard() {
+  const p = positions[view];
+  const live = view === positions.length - 1;
   const myTurn = !over && game.turn() === myColor;
-  const cfg = {
-    fen: game.fen(),
-    turnColor: colorName(game.turn()),
-    check: game.isCheck() ? colorName(game.turn()) : false,
-    movable: { color: myTurn ? colorName(myColor) : undefined, dests: myTurn ? legalDests() : new Map() },
-  };
-  if (lastMove) cfg.lastMove = lastMove;
-  cg.set(cfg);
+  const canMove = live && myTurn;
+  const turn = p.fen.split(' ')[1];
+  cg.set({
+    fen: p.fen,
+    lastMove: p.last,
+    turnColor: colorName(turn),
+    check: p.check ? colorName(turn) : false,
+    movable: { color: canMove ? colorName(myColor) : undefined, dests: canMove ? legalDests() : new Map() },
+  });
+  setBar(evals.slice(0, view + 1).findLast((e) => e != null));
+  renderMoves();
+  tick();
   if (!over) {
     setStatus((myColor === 'w' ? 'Tu joues les Blancs' : 'Tu joues les Noirs') + ' · ' +
-      (myTurn ? 'à toi de jouer' : "au tour de l'adversaire"));
+      (myTurn ? 'à toi de jouer' : "au tour de l'adversaire") + (live ? '' : ' · historique'));
   }
 }
 
+function renderMoves() {
+  const box = $('moves');
+  box.innerHTML = '';
+  positions.slice(1).forEach((p, i) => {
+    if (i % 2 === 0) {
+      const n = document.createElement('span');
+      n.className = 'num';
+      n.textContent = i / 2 + 1 + '.';
+      box.appendChild(n);
+    }
+    const b = document.createElement('button');
+    b.className = 'mv' + (i + 1 === view ? ' cur' : '');
+    b.textContent = p.san;
+    b.onclick = () => goTo(i + 1);
+    box.appendChild(b);
+  });
+  const cur = box.querySelector('.cur');
+  if (cur) box.scrollTop = cur.offsetTop - box.clientHeight / 2;
+}
+
+function goTo(i) {
+  view = Math.max(0, Math.min(positions.length - 1, i));
+  cg.selectSquare(null);
+  refreshBoard();
+}
+
 function setStatus(t) { $('status').textContent = t; }
+
+function addChat(who, text) {
+  const log = $('chat-log');
+  const line = document.createElement('div');
+  line.className = who === 'Toi' ? 'me' : '';
+  const name = document.createElement('b');
+  name.textContent = who + ' : ';
+  line.append(name, text);
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+/* ---------- Pendules ---------- */
+// ponytail: pas d'arbitre, chaque navigateur annonce son propre temps ; un client modifié peut mentir, mais sans dépasser son temps précédent + ajout
+const remaining = (c) => clocks[c] - (runStart && game.turn() === c ? Date.now() - runStart : 0);
+
+function formatClock(ms) {
+  ms = Math.max(0, ms);
+  if (ms < 10000) return (ms / 1000).toFixed(1);
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function tick() {
+  if (!tc || !game) return;
+  if (over && runStart) { clocks[game.turn()] = remaining(game.turn()); runStart = null; }
+  const mine = myColor, theirs = myColor === 'w' ? 'b' : 'w';
+  for (const [id, c] of [['clock-bottom', mine], ['clock-top', theirs]]) {
+    const el = $(id);
+    el.textContent = formatClock(remaining(c));
+    el.classList.toggle('active', !!runStart && game.turn() === c);
+    el.classList.toggle('low', remaining(c) < 10000);
+  }
+  if (!runStart) return;
+  const c = game.turn();
+  if (remaining(c) <= (c === myColor ? 0 : -FLAG_GRACE)) { send({ t: 'flag', c }); endOnTime(c); }
+}
+
+function endOnTime(c) {
+  over = true;
+  clocks[c] = 0;
+  runStart = null;
+  $('promo').hidden = true;
+  evaluator.stop();
+  const winner = c === 'w' ? 'b' : 'w';
+  // ponytail: nulle seulement si le gagnant n'a que son roi, la règle FIDE complète teste tout mat possible
+  const canMate = game.board().flat().some((p) => p && p.color === winner && p.type !== 'k');
+  setStatus('Temps écoulé · ' + (!canMate ? 'partie nulle.' : winner === myColor ? 'tu gagnes !' : "l'adversaire gagne."));
+  finishUI();
+  tick();
+}
 
 function onUserMove(from, to) {
   const piece = game.get(from);
@@ -281,34 +398,45 @@ function askPromotion(from, to) {
   box.hidden = false;
 }
 
-function applyMove(m, mine) {
+function applyMove(m, mine, left) {
+  if (mine) { tick(); if (over) { refreshBoard(); return; } } // temps écoulé juste avant ce coup
+  const c = game.turn();
+  const before = tc ? remaining(c) : 0;
   let res;
   try { res = game.move(m); } catch { res = null; }
   if (!res) { refreshBoard(); return; }
-  if (mine) send({ t: 'move', from: m.from, to: m.to, promotion: m.promotion });
-  afterMove([res.from, res.to]);
+  if (tc) {
+    // Les pendules démarrent après le premier coup de chaque camp (demi-coup 2)
+    const plies = positions.length;
+    if (plies >= 3) clocks[c] = mine ? before + tc.inc : Math.min(+left || 0, clocks[c] + tc.inc);
+    runStart = plies >= 2 ? Date.now() : null;
+  }
+  if (mine) send({ t: 'move', from: m.from, to: m.to, promotion: m.promotion, left: clocks[c] });
+  afterMove(res);
 }
 
-function afterMove(last) {
+function afterMove(res) {
+  positions.push({ fen: game.fen(), last: [res.from, res.to], san: res.san, check: game.isCheck() });
+  view = positions.length - 1; // un nouveau coup ramène toujours à la position actuelle
   // Fin de partie ?
   if (game.isGameOver()) {
     over = true;
     let txt;
     if (game.isCheckmate()) {
       const whiteWins = game.turn() === 'b';
-      setBar(whiteWins ? 100 : 0);
+      evals[view] = whiteWins ? 100 : 0;
       txt = 'Échec et mat · ' + ((whiteWins ? 'w' : 'b') === myColor ? 'tu gagnes !' : "l'adversaire gagne.");
     } else {
-      setBar(50);
+      evals[view] = 50;
       txt = game.isStalemate() ? 'Pat · partie nulle.' : 'Partie nulle.';
     }
     evaluator.stop();
-    refreshBoard(last);
+    refreshBoard();
     setStatus(txt);
     finishUI();
     return;
   }
-  refreshBoard(last);
+  refreshBoard();
   evaluator.evaluate(game.fen());
 }
 
@@ -327,6 +455,13 @@ function rematch() {
 }
 
 /* ---------- Événements UI ---------- */
+const presets = document.querySelectorAll('.presets button');
+function syncPresets() {
+  for (const b of presets) b.setAttribute('aria-pressed', +b.dataset.min === +$('tc-min').value && +b.dataset.inc === +$('tc-inc').value);
+}
+for (const b of presets) b.onclick = () => { $('tc-min').value = b.dataset.min; $('tc-inc').value = b.dataset.inc; syncPresets(); };
+$('tc-min').oninput = $('tc-inc').oninput = syncPresets;
+syncPresets();
 $('btn-create').onclick = createRoom;
 $('join-form').onsubmit = (e) => { e.preventDefault(); joinRoom($('code-input').value); };
 $('btn-cancel').onclick = () => location.assign(location.pathname);
@@ -349,6 +484,27 @@ $('btn-rematch').onclick = () => {
   send({ t: 'rematch' });
   if (theyWantRematch) rematch(); else { setStatus('Revanche demandée…'); updateButtons(); }
 };
+
+$('chat-form').onsubmit = (e) => {
+  e.preventDefault();
+  const text = $('chat-input').value.trim();
+  if (!text || !conn || !conn.open) return;
+  send({ t: 'chat', text });
+  addChat('Toi', text);
+  $('chat-input').value = '';
+};
+$('nav-first').onclick = () => goTo(0);
+$('nav-prev').onclick = () => goTo(view - 1);
+$('nav-next').onclick = () => goTo(view + 1);
+$('nav-last').onclick = () => goTo(positions.length - 1);
+document.addEventListener('keydown', (e) => {
+  if ($('game').hidden || !$('promo').hidden || e.target.tagName === 'INPUT') return;
+  const to = { ArrowLeft: view - 1, ArrowRight: view + 1, ArrowUp: 0, ArrowDown: positions.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  goTo(to);
+});
+setInterval(tick, 100);
 
 // Lien d'invitation ?room=CODE
 const invited = new URLSearchParams(location.search).get('room');

@@ -5,6 +5,9 @@ Partie d'échecs à deux, en ligne, où l'on ne voit que la barre d'évaluation 
 - Site 100 % statique, aucune API Lichess : Stockfish tourne dans le navigateur (WASM, version lite, ~1,8 Mo).
 - La barre ne bouge qu'à partir de la profondeur 14 et continue jusqu'à 17 si on attend (réglable en haut de `app.js` : `MIN_DEPTH`, `MAX_DEPTH`).
 - Rooms par code (5 caractères) en WebRTC via PeerJS, lien d'invitation `?room=CODE`.
+- Temps et ajout par coup choisis à la création de la room (0 min = sans limite). Les pendules démarrent après le premier coup de chaque camp. Pas d'arbitre : chaque navigateur gère son propre temps.
+- Chat entre les deux joueurs.
+- Historique : ← → pour reculer/avancer d'un coup, ↑ pour le début, ↓ pour la position actuelle, ou boutons et liste de coups.
 
 ## Tester en local
 Ne pas ouvrir `index.html` en double-cliquant : en `file://`, le navigateur bloque les modules ES et le Worker Stockfish.
